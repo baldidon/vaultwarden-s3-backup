@@ -1,0 +1,19 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vaultwarden-s3-backup"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3==1.37.37",
+    "cryptography==44.0.3",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project.scripts]
+backup = "src.main:main"
+decrypt = "src.decrypt:main"
