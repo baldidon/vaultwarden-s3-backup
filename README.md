@@ -1,19 +1,19 @@
 # Vaultwarden S3 Backup
 
-Strumento containerizzato per il backup automatico di un'istanza Vaultwarden, con cifratura AES-256-GCM e caricamento su storage S3-compatible e/o salvataggio locale.
+A containerized tool for automated Vaultwarden backups with AES-256-GCM encryption and upload to S3-compatible storage and/or local storage.
 
-## Struttura del progetto
+## Project structure
 
 ```
 vaultwarden-s3-backup/
 ├── src/
-│   ├── main.py        # Entry point del backup
-│   ├── decrypt.py     # Tool di decifrazione
-│   ├── config.py      # Configurazione da variabili d'ambiente
-│   ├── backup.py      # Logica di backup e deduplicazione
-│   ├── crypto.py      # Cifratura / decifrazione AES-256-GCM
-│   ├── s3.py          # Upload e cleanup su S3
-│   └── local.py       # Salvataggio e cleanup in locale
+│   ├── main.py        # Backup entry point
+│   ├── decrypt.py     # Decryption utility
+│   ├── config.py      # Configuration from environment variables
+│   ├── backup.py      # Backup logic and deduplication
+│   ├── crypto.py      # AES-256-GCM encryption / decryption
+│   ├── s3.py          # S3 upload and cleanup
+│   └── local.py       # Local save and cleanup
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -22,76 +22,76 @@ vaultwarden-s3-backup/
 └── .dockerignore
 ```
 
-| Script | Comando | Descrizione |
+| Script | Command | Description |
 |--------|---------|-------------|
-| `backup` | `uv run backup` | Esegue il backup completo |
-| `decrypt` | `uv run decrypt <input> <output>` | Decifra un file di backup |
+| `backup` | `uv run backup` | Runs a full backup |
+| `decrypt` | `uv run decrypt <input> <output>` | Decrypts a backup file |
 
-## Come funziona
+## How it works
 
-Ogni esecuzione del backup:
+Each backup run:
 
-1. **Controllo modifiche** — calcola un fingerprint SHA-256 della data directory (path, dimensione e mtime di ogni file) e lo confronta con quello dell'ultimo backup. Se i dati non sono cambiati, salta l'esecuzione
-2. **Backup sicuro del database** — usa `sqlite3 .backup` per copiare `db.sqlite3` senza rischio di corruzione
-3. **Copia completa dei dati** — copia allegati, sends, configurazione, chiavi RSA e tutto il resto della data directory
-4. **Archiviazione** — crea un archivio `tar.gz` in una directory temporanea
-5. **Cifratura** — cifra l'archivio con AES-256-GCM (chiave derivata via PBKDF2-SHA256 con 600.000 iterazioni)
-6. **Upload / salvataggio** — carica il backup su S3 e/o lo salva in locale, a seconda della configurazione
-7. **Pulizia** — elimina automaticamente i backup più vecchi del periodo di retention su ogni destinazione configurata
+1. **Change detection** — computes a SHA-256 fingerprint of the data directory (path, size, and mtime of every file) and compares it against the last backup's fingerprint. If nothing changed, the run is skipped
+2. **Safe database backup** — uses `sqlite3 .backup` to copy `db.sqlite3` without risk of corruption
+3. **Full data copy** — copies attachments, sends, config, RSA keys, and everything else from the data directory
+4. **Archiving** — creates a `tar.gz` archive in a temporary directory
+5. **Encryption** — encrypts the archive with AES-256-GCM (key derived via PBKDF2-SHA256 with 600,000 iterations)
+6. **Upload / save** — uploads the backup to S3 and/or saves it locally, depending on configuration
+7. **Cleanup** — automatically deletes backups older than the retention period on each configured destination
 
-Il file di backup segue il path:
+Backup file path:
 
 ```
 # S3
 <prefix>/<YYYY>/<MM>/<DD>/vaultwarden-backup-YYYYMMDD-HHMMSS.tar.gz.enc
 
-# Locale
+# Local
 <local_path>/<YYYY>/<MM>/<DD>/vaultwarden-backup-YYYYMMDD-HHMMSS.tar.gz.enc
 ```
 
-## Destinazioni
+## Destinations
 
-Il tool supporta tre modalità operative:
+The tool supports three operating modes:
 
-| Modalità | Configurazione richiesta |
-|----------|------------------------|
-| **Solo S3** | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
-| **Solo locale** | `LOCAL_BACKUP_PATH` |
-| **S3 + locale** | Entrambi i set di variabili |
+| Mode | Required configuration |
+|------|----------------------|
+| **S3 only** | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY` |
+| **Local only** | `LOCAL_BACKUP_PATH` |
+| **S3 + local** | Both sets of variables |
 
-Almeno una destinazione deve essere configurata. Per S3, tutte e quattro le variabili sono obbligatorie.
+At least one destination must be configured. For S3, all four variables are required.
 
-## Formato del file cifrato
+## Encrypted file format
 
-Il file `.enc` è strutturato così:
+The `.enc` file is structured as follows:
 
-| Campo | Dimensione | Descrizione |
-|-------|-----------|-------------|
-| Salt | 16 bytes | Salt casuale per PBKDF2 |
-| Nonce | 12 bytes | Nonce per AES-GCM |
-| Ciphertext + Tag | variabile | Dati cifrati + tag di autenticazione |
+| Field | Size | Description |
+|-------|------|-------------|
+| Salt | 16 bytes | Random salt for PBKDF2 |
+| Nonce | 12 bytes | Nonce for AES-GCM |
+| Ciphertext + Tag | variable | Encrypted data + authentication tag |
 
-## Deduplicazione
+## Deduplication
 
-Il tool calcola un fingerprint SHA-256 della data directory di Vaultwarden prima di ogni esecuzione. Il fingerprint è basato su:
-- Percorso relativo di ogni file
-- Dimensione
-- Timestamp di modifica (nanosecondi)
+The tool computes a SHA-256 fingerprint of the Vaultwarden data directory before each run. The fingerprint is based on:
+- Relative path of every file
+- File size
+- Modification timestamp (nanoseconds)
 
-I file `.sqlite3-wal` e `.sqlite3-shm` sono esclusi dal calcolo poiché transitori.
+`.sqlite3-wal` and `.sqlite3-shm` files are excluded from the calculation since they are transient.
 
-Il fingerprint viene salvato:
-- Su S3: come metadata dell'oggetto (`x-amz-meta-fingerprint`)
-- In locale: come file `.last_fingerprint` nella root della directory di backup
+The fingerprint is stored:
+- On S3: as object metadata (`x-amz-meta-fingerprint`)
+- Locally: as a `.last_fingerprint` file in the backup directory root
 
-Se il fingerprint è identico a tutte le destinazioni configurate, il backup viene saltato.
+If the fingerprint matches all configured destinations, the backup is skipped.
 
-## Esecuzione locale
+## Running locally
 
-### Prerequisiti
+### Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) installato
-- `sqlite3` disponibile nel PATH
+- [uv](https://docs.astral.sh/uv/) installed
+- `sqlite3` available in PATH
 
 ### Setup
 
@@ -101,31 +101,31 @@ cd vaultwarden-s3-backup
 cp .env.example .env
 ```
 
-Modifica `.env` con la tua configurazione (vedi [Variabili d'ambiente](#variabili-dambiente)).
+Edit `.env` with your configuration (see [Environment variables](#environment-variables)).
 
-### Installa dipendenze
+### Install dependencies
 
 ```bash
 uv sync
 ```
 
-### Lancia un backup
+### Run a backup
 
 ```bash
 uv run backup
 ```
 
-### Decifra un backup
+### Decrypt a backup
 
 ```bash
-# Con password come argomento
-uv run decrypt vaultwarden-backup-20260425-030000.tar.gz.enc backup.tar.gz -p la-tua-password
+# With password as argument
+uv run decrypt vaultwarden-backup-20260425-030000.tar.gz.enc backup.tar.gz -p your-password
 
-# Con password da variabile d'ambiente
-DECRYPTION_PASSWORD=la-tua-password uv run decrypt vaultwarden-backup-20260425-030000.tar.gz.enc backup.tar.gz
+# With password from environment variable
+DECRYPTION_PASSWORD=your-password uv run decrypt vaultwarden-backup-20260425-030000.tar.gz.enc backup.tar.gz
 ```
 
-Poi estrai l'archivio:
+Then extract the archive:
 
 ```bash
 tar xzf backup.tar.gz -C /path/to/vaultwarden/data
@@ -133,7 +133,7 @@ tar xzf backup.tar.gz -C /path/to/vaultwarden/data
 
 ## Docker Compose
 
-### 1. Clona e configura
+### 1. Clone and configure
 
 ```bash
 git clone <repo-url>
@@ -141,10 +141,10 @@ cd vaultwarden-s3-backup
 cp .env.example .env
 ```
 
-### 2. Modifica `.env`
+### 2. Edit `.env`
 
 ```env
-# S3 (ometti tutto il blocco per disabilitare)
+# S3 (omit the entire block to disable)
 S3_ENDPOINT=https://s3.example.com
 S3_REGION=us-east-1
 S3_BUCKET=my-backups
@@ -152,11 +152,11 @@ S3_ACCESS_KEY=your-access-key
 S3_SECRET_KEY=your-secret-key
 S3_PATH_PREFIX=vaultwarden-backups
 
-# Locale (ometti per disabilitare)
+# Local (omit to disable)
 LOCAL_BACKUP_PATH=/backups
 
-# Cifratura (obbligatoria)
-ENCRYPTION_PASSWORD=una-password-forte
+# Encryption (required)
+ENCRYPTION_PASSWORD=a-strong-password
 
 # Vaultwarden
 VAULTWARDEN_DATA_PATH=/data
@@ -164,27 +164,27 @@ VAULTWARDEN_DATA_PATH=/data
 # Retention
 BACKUP_RETENTION_DAYS=30
 
-# Cron (sintassi standard)
-BACKUP_CRON=0 3 * * *                      # Ogni notte alle 03:00 UTC
+# Cron (standard cron syntax)
+BACKUP_CRON=0 3 * * *                      # Every night at 03:00 UTC
 ```
 
-### 3. Avvia
+### 3. Start
 
 ```bash
 docker compose up -d
 ```
 
-Il `docker-compose.yml` include tre servizi:
+The `docker-compose.yml` includes three services:
 
-| Servizio | Descrizione |
-|----------|-------------|
-| `vaultwarden` | Istanza Vaultwarden con volume condiviso |
-| `backup` | Tool di backup (mount read-only dei dati + volume per backup locali) |
-| `ofelia` | Scheduler che esegue il backup secondo il cron configurato |
+| Service | Description |
+|---------|-------------|
+| `vaultwarden` | Vaultwarden instance with shared volume |
+| `backup` | Backup tool (read-only data mount + volume for local backups) |
+| `ofelia` | Scheduler that runs backups according to the configured cron |
 
-### Se hai già un'istanza Vaultwarden
+### Using an existing Vaultwarden instance
 
-Se Vaultwarden è già in esecuzione, rimuovi il servizio `vaultwarden` dal compose e monta il volume esistente:
+If Vaultwarden is already running, remove the `vaultwarden` service from the compose file and mount the existing volume:
 
 ```yaml
 services:
@@ -209,41 +209,41 @@ services:
     restart: unless-stopped
 ```
 
-### Esecuzione manuale
+### Manual run
 
-Per lanciare un backup fuori dallo schedule:
+To trigger a backup outside of the schedule:
 
 ```bash
 docker compose run --rm backup
 ```
 
-## Variabili d'ambiente
+## Environment variables
 
-| Variabile | Obbligatoria | Default | Descrizione |
-|-----------|-------------|---------|-------------|
-| `ENCRYPTION_PASSWORD` | Sì | — | Password per cifratura |
-| `S3_ENDPOINT` | Condizionale | — | Endpoint S3-compatible |
-| `S3_BUCKET` | Condizionale | — | Nome del bucket |
-| `S3_ACCESS_KEY` | Condizionale | — | Access key |
-| `S3_SECRET_KEY` | Condizionale | — | Secret key |
-| `S3_REGION` | No | `us-east-1` | Regione |
-| `S3_PATH_PREFIX` | No | `vaultwarden-backups` | Prefisso nel bucket |
-| `LOCAL_BACKUP_PATH` | Condizionale | — | Path locale per i backup |
-| `VAULTWARDEN_DATA_PATH` | No | `/data` | Path dati Vaultwarden |
-| `BACKUP_RETENTION_DAYS` | No | `30` | Giorni di retention |
-| `BACKUP_CRON` | No | `0 3 * * *` | Schedule cron |
-| `TMP_DIR` | No | `/tmp/vw-backup` | Directory temporanea |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ENCRYPTION_PASSWORD` | Yes | — | Password for encryption |
+| `S3_ENDPOINT` | Conditional | — | S3-compatible endpoint |
+| `S3_BUCKET` | Conditional | — | Bucket name |
+| `S3_ACCESS_KEY` | Conditional | — | Access key |
+| `S3_SECRET_KEY` | Conditional | — | Secret key |
+| `S3_REGION` | No | `us-east-1` | Region |
+| `S3_PATH_PREFIX` | No | `vaultwarden-backups` | Path prefix in the bucket |
+| `LOCAL_BACKUP_PATH` | Conditional | — | Local path for backups |
+| `VAULTWARDEN_DATA_PATH` | No | `/data` | Vaultwarden data path |
+| `BACKUP_RETENTION_DAYS` | No | `30` | Retention period in days |
+| `BACKUP_CRON` | No | `0 3 * * *` | Cron schedule |
+| `TMP_DIR` | No | `/tmp/vw-backup` | Temporary directory |
 
-> **Nota**: almeno una destinazione tra S3 (tutte le variabili S3\_\*) e locale (`LOCAL_BACKUP_PATH`) deve essere configurata.
+> **Note**: at least one destination between S3 (all `S3_*` variables) and local (`LOCAL_BACKUP_PATH`) must be configured.
 
-## Storage S3-compatible supportati
+## Supported S3-compatible storage
 
-Qualsiasi servizio compatibile con l'API S3, tra cui:
+Any service compatible with the S3 API, including:
 
 - AWS S3
 - MinIO
 - Wasabi
 - DigitalOcean Spaces
-- Google Cloud Storage (via interoperabilità S3)
-- Backblaze B2 (via endpoint S3)
+- Google Cloud Storage (via S3 interoperability)
+- Backblaze B2 (via S3 endpoint)
 - Ceph RADOS Gateway
