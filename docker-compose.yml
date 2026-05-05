@@ -12,18 +12,17 @@ services:
     build: .
     container_name: vw-backup
     env_file: .env
-    environment:
-      BACKUP_CRON: "${BACKUP_CRON:-0 3 * * *}"
+    entrypoint: ["sleep", "infinity"]
     volumes:
       - vw-data:/data:ro
       - vw-backups:/backups
     labels:
       ofelia.enabled: "true"
       ofelia.job-exec.vw-backup: "uv run backup"
-      ofelia.job-exec.vw-backup.schedule: "0 3 * * *"
+      ofelia.job-exec.vw-backup.schedule: "${BACKUP_CRON:-0 3 * * *}"
     depends_on:
       - vaultwarden
-    restart: "no"
+    restart: unless-stopped
 
   ofelia:
     image: mcuadros/ofelia:latest
