@@ -3,6 +3,7 @@ import sys
 
 from src.config import Config
 from src.backup import run_backup
+from src.notify import send_notification
 
 
 def _setup_logging() -> None:
@@ -20,13 +21,20 @@ def main() -> None:
 
     try:
         cfg = Config.from_env()
-        result = run_backup(cfg)
-        if result is None:
-            sys.exit(0)
     except Exception:
-        logger.exception("Backup failed")
+        logger.exception("Configuration error")
         sys.exit(1)
 
-
-if __name__ == "__main__":
-    main()
+    try:
+        result = run_backup(cfg)
+        if result is None:
+            if cfg.notify_on_success:
+                send_notification(cfg, "skipped", "No changes detected since last backup")
+            sys.exit(0)
+        if cfg.notify_on_success:
+            send_notification(cfg, "success", f"Backup complete: {result}")
+    except Exception:
+        logger.exception("Backup failed")
+        if cfg.notify_on_failure:
+            send_notification(cfg, "failure", "Backup failed, check container logs for details")
+        sys.exit(1)

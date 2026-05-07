@@ -17,3 +17,11 @@ packages = ["src"]
 [project.scripts]
 backup = "src.main:main"
 decrypt = "src.decrypt:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

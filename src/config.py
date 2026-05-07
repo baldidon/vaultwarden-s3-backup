@@ -18,6 +18,10 @@ class Config:
 
     local_backup_path: str | None
 
+    notify_webhook_url: str | None
+    notify_on_success: bool
+    notify_on_failure: bool
+
     @property
     def s3_enabled(self) -> bool:
         return all(
@@ -71,4 +75,11 @@ class Config:
             s3_secret_key=s3_secret_key,
             s3_path_prefix=os.getenv("S3_PATH_PREFIX", "vaultwarden-backups"),
             local_backup_path=local_backup_path,
+            notify_webhook_url=os.getenv("NOTIFY_WEBHOOK_URL") or None,
+            notify_on_success=_parse_bool(os.getenv("NOTIFY_ON_SUCCESS", "true")),
+            notify_on_failure=_parse_bool(os.getenv("NOTIFY_ON_FAILURE", "true")),
         )
+
+
+def _parse_bool(value: str) -> bool:
+    return value.lower() in ("true", "1", "yes")

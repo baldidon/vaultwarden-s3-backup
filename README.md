@@ -13,7 +13,14 @@ vaultwarden-s3-backup/
 │   ├── backup.py      # Backup logic and deduplication
 │   ├── crypto.py      # AES-256-GCM encryption / decryption
 │   ├── s3.py          # S3 upload and cleanup
-│   └── local.py       # Local save and cleanup
+│   ├── local.py       # Local save and cleanup
+│   └── notify.py      # Webhook notifications
+├── tests/
+│   ├── test_config.py
+│   ├── test_crypto.py
+│   ├── test_notify.py
+│   ├── test_backup.py
+│   └── test_local.py
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -38,6 +45,7 @@ Each backup run:
 5. **Encryption** — encrypts the archive with AES-256-GCM (key derived via PBKDF2-SHA256 with 600,000 iterations)
 6. **Upload / save** — uploads the backup to S3 and/or saves it locally, depending on configuration
 7. **Cleanup** — automatically deletes backups older than the retention period on each configured destination
+8. **Notification** — sends a webhook notification on success, failure, or skip (if configured)
 
 Backup file path:
 
@@ -60,6 +68,36 @@ The tool supports three operating modes:
 | **S3 + local** | Both sets of variables |
 
 At least one destination must be configured. For S3, all four variables are required.
+
+## Notifications
+
+The tool can send webhook notifications on backup completion, failure, or skip. Set `NOTIFY_WEBHOOK_URL` to any URL that accepts JSON POST requests.
+
+### Payload format
+
+```json
+{
+  "status": "success | failure | skipped",
+  "message": "Backup complete: /backups/2026/05/07/vaultwarden-backup-20260507-030000.tar.gz.enc",
+  "timestamp": "2026-05-07T03:00:01.234567+00:00"
+}
+```
+
+### Compatible services
+
+- [ntfy.sh](https://ntfy.sh) — `NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic`
+- [Discord](https://support.discord.com/hc/en-us/articles/228383668) — use a Discord webhook URL
+- [Slack](https://api.slack.com/messaging/webhooks) — use a Slack webhook URL
+- [Gotify](https://gotify.net/) — `NOTIFY_WEBHOOK_URL=https://gotify.example.com/message?token=xxx`
+- Any service that accepts JSON POST
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `NOTIFY_WEBHOOK_URL` | — | Webhook URL (omit to disable) |
+| `NOTIFY_ON_SUCCESS` | `true` | Notify on successful backup or skip |
+| `NOTIFY_ON_FAILURE` | `true` | Notify on backup failure |
 
 ## Encrypted file format
 
@@ -166,6 +204,9 @@ BACKUP_RETENTION_DAYS=30
 
 # Cron (standard cron syntax)
 BACKUP_CRON=0 3 * * *                      # Every night at 03:00 UTC
+
+# Notifications (optional)
+NOTIFY_WEBHOOK_URL=https://ntfy.sh/your-topic
 ```
 
 ### 3. Start
@@ -179,8 +220,10 @@ The `docker-compose.yml` includes three services:
 | Service | Description |
 |---------|-------------|
 | `vaultwarden` | Vaultwarden instance with shared volume |
-| `backup` | Backup tool (read-only data mount + volume for local backups) |
+| `backup` | Backup tool (stays idle, Ofelia triggers backups via `docker exec`) |
 | `ofelia` | Scheduler that runs backups according to the configured cron |
+
+The `backup` container has a healthcheck (`pgrep -f sleep`) and Ofelia waits for it to be healthy before starting.
 
 ### Using an existing Vaultwarden instance
 
@@ -199,6 +242,13 @@ services:
       ofelia.enabled: "true"
       ofelia.job-exec.vw-backup: "uv run backup"
       ofelia.job-exec.vw-backup.schedule: "${BACKUP_CRON:-0 3 * * *}"
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "sleep"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
 
   ofelia:
     image: mcuadros/ofelia:latest
@@ -206,6 +256,9 @@ services:
     command: daemon --docker
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      backup:
+        condition: service_healthy
     restart: unless-stopped
 ```
 
@@ -214,7 +267,14 @@ services:
 To trigger a backup outside of the schedule:
 
 ```bash
-docker compose run --rm backup
+docker compose exec vw-backup uv run backup
+```
+
+## Testing
+
+```bash
+uv sync --group dev
+uv run pytest -v
 ```
 
 ## Environment variables
@@ -233,6 +293,9 @@ docker compose run --rm backup
 | `BACKUP_RETENTION_DAYS` | No | `30` | Retention period in days |
 | `BACKUP_CRON` | No | `0 3 * * *` | Cron schedule |
 | `TMP_DIR` | No | `/tmp/vw-backup` | Temporary directory |
+| `NOTIFY_WEBHOOK_URL` | No | — | Webhook URL for notifications |
+| `NOTIFY_ON_SUCCESS` | No | `true` | Notify on success/skip |
+| `NOTIFY_ON_FAILURE` | No | `true` | Notify on failure |
 
 > **Note**: at least one destination between S3 (all `S3_*` variables) and local (`LOCAL_BACKUP_PATH`) must be configured.
 
