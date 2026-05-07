@@ -28,8 +28,6 @@ def main() -> None:
     try:
         result = run_backup(cfg)
         if result is None:
-            if cfg.notify_on_success:
-                send_notification(cfg, "skipped", "No changes detected since last backup")
             sys.exit(0)
         if cfg.notify_on_success:
             send_notification(cfg, "success", f"Backup complete: {result}")
