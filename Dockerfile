@@ -11,4 +11,4 @@ COPY src/ src/
 
 RUN uv sync --no-dev --frozen
 
-ENTRYPOINT ["uv", "run", "backup"]
+ENTRYPOINT ["sleep", "infinity"]

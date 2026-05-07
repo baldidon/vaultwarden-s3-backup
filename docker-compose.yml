@@ -12,7 +12,6 @@ services:
     build: .
     container_name: vw-backup
     env_file: .env
-    entrypoint: ["sleep", "infinity"]
     volumes:
       - vw-data:/data:ro
       - vw-backups:/backups
