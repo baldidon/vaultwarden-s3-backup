@@ -76,6 +76,11 @@ class TestCleanupOldLocalBackups:
     def test_deletes_old_backups(self, tmp_path):
         cfg = _cfg(local_backup_path=str(tmp_path), backup_retention_days=7)
 
+        for i in range(3):
+            recent_dir = tmp_path / "2026" / "05" / f"{i + 1:02d}"
+            recent_dir.mkdir(parents=True)
+            (recent_dir / f"vaultwarden-backup-2026050{i + 1}-030000.tar.gz.enc").write_bytes(b"\x00")
+
         old_dir = tmp_path / "2025" / "01" / "01"
         old_dir.mkdir(parents=True)
         old_file = old_dir / "vaultwarden-backup-20250101-030000.tar.gz.enc"
@@ -87,6 +92,8 @@ class TestCleanupOldLocalBackups:
         deleted = cleanup_old_local_backups(cfg)
         assert deleted == 1
         assert not old_file.exists()
+        remaining = list(tmp_path.rglob("*.tar.gz.enc"))
+        assert len(remaining) == 3
 
     def test_keeps_recent_backups(self, tmp_path):
         cfg = _cfg(local_backup_path=str(tmp_path), backup_retention_days=30)
@@ -102,6 +109,11 @@ class TestCleanupOldLocalBackups:
 
     def test_removes_empty_parent_dirs(self, tmp_path):
         cfg = _cfg(local_backup_path=str(tmp_path), backup_retention_days=7)
+
+        for i in range(3):
+            recent_dir = tmp_path / "2026" / "05" / f"{i + 1:02d}"
+            recent_dir.mkdir(parents=True)
+            (recent_dir / f"vaultwarden-backup-2026050{i + 1}.tar.gz.enc").write_bytes(b"\x00")
 
         day_dir = tmp_path / "2025" / "01" / "01"
         day_dir.mkdir(parents=True)
@@ -124,3 +136,21 @@ class TestCleanupOldLocalBackups:
     def test_nonexistent_path(self):
         cfg = _cfg(local_backup_path="/nonexistent/path")
         assert cleanup_old_local_backups(cfg) == 0
+
+    def test_keeps_minimum_backups_regardless_of_age(self, tmp_path):
+        cfg = _cfg(local_backup_path=str(tmp_path), backup_retention_days=0)
+
+        old_mtime = (datetime.now(timezone.utc) - timedelta(days=100)).timestamp()
+
+        for i in range(5):
+            day_dir = tmp_path / "2025" / "01" / f"{i + 1:02d}"
+            day_dir.mkdir(parents=True)
+            f = day_dir / f"vaultwarden-backup-{i}.tar.gz.enc"
+            f.write_bytes(b"\x00")
+            os.utime(f, (old_mtime, old_mtime))
+
+        deleted = cleanup_old_local_backups(cfg)
+        assert deleted == 3
+
+        remaining = list(tmp_path.rglob("*.tar.gz.enc"))
+        assert len(remaining) == 2

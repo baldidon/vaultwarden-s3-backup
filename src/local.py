@@ -39,18 +39,29 @@ def get_last_local_fingerprint(cfg: Config) -> str | None:
     return fingerprint
 
 
+MINIMUM_BACKUPS_TO_KEEP = 2
+
+
 def cleanup_old_local_backups(cfg: Config) -> int:
     if not os.path.isdir(cfg.local_backup_path):
         return 0
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=cfg.backup_retention_days)
-    base = Path(cfg.local_backup_path)
-    deleted = 0
+    logger.info("Local cleanup cutoff: %s (retention=%d days)", cutoff.isoformat(), cfg.backup_retention_days)
 
-    for enc_file in sorted(base.rglob("*.tar.gz.enc")):
+    base = Path(cfg.local_backup_path)
+    all_files = sorted(base.rglob("*.tar.gz.enc"), key=lambda f: f.stat().st_mtime, reverse=True)
+
+    keep = set(all_files[:MINIMUM_BACKUPS_TO_KEEP])
+
+    deleted = 0
+    for enc_file in all_files:
+        if enc_file in keep:
+            logger.info("Keeping recent local backup: %s", enc_file)
+            continue
         mtime = datetime.fromtimestamp(enc_file.stat().st_mtime, tz=timezone.utc)
         if mtime < cutoff:
-            logger.info("Deleting old local backup: %s", enc_file)
+            logger.info("Deleting old local backup: %s (mtime: %s)", enc_file, mtime.isoformat())
             enc_file.unlink()
             deleted += 1
             parent = enc_file.parent
@@ -63,6 +74,6 @@ def cleanup_old_local_backups(cfg: Config) -> int:
     if deleted:
         logger.info("Cleaned up %d old local backup(s)", deleted)
     else:
-        logger.info("No old local backups to clean up")
+        logger.info("No old local local backups to clean up")
 
     return deleted

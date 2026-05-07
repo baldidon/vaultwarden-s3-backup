@@ -72,20 +72,43 @@ def get_last_backup_fingerprint(cfg: Config) -> str | None:
     return fingerprint
 
 
+MINIMUM_BACKUPS_TO_KEEP = 2
+
+
 def cleanup_old_backups(cfg: Config) -> int:
     client = _get_client(cfg)
     prefix = cfg.s3_path_prefix + "/"
     cutoff = datetime.now(timezone.utc) - timedelta(days=cfg.backup_retention_days)
 
+    logger.info("Cleanup cutoff: %s (retention=%d days)", cutoff.isoformat(), cfg.backup_retention_days)
+
     paginator = client.get_paginator("list_objects_v2")
-    deleted = 0
+    all_objects = []
 
     for page in paginator.paginate(Bucket=cfg.s3_bucket, Prefix=prefix):
         for obj in page.get("Contents", []):
-            if obj["LastModified"] < cutoff:
-                client.delete_object(Bucket=cfg.s3_bucket, Key=obj["Key"])
-                logger.info("Deleted old backup: %s", obj["Key"])
-                deleted += 1
+            all_objects.append(obj)
+
+    all_objects.sort(key=lambda o: o["LastModified"], reverse=True)
+
+    keep = set()
+    for obj in all_objects[:MINIMUM_BACKUPS_TO_KEEP]:
+        keep.add(obj["Key"])
+        logger.info("Keeping recent backup: %s (LastModified: %s)", obj["Key"], obj["LastModified"])
+
+    deleted = 0
+    for obj in all_objects:
+        if obj["Key"] in keep:
+            continue
+        last_modified = obj["LastModified"]
+        if last_modified.tzinfo is None:
+            last_modified = last_modified.replace(tzinfo=timezone.utc)
+        if last_modified < cutoff:
+            logger.info("Deleting old backup: %s (LastModified: %s)", obj["Key"], last_modified.isoformat())
+            client.delete_object(Bucket=cfg.s3_bucket, Key=obj["Key"])
+            deleted += 1
+        else:
+            logger.info("Keeping backup: %s (LastModified: %s)", obj["Key"], last_modified.isoformat())
 
     if deleted:
         logger.info("Cleaned up %d old backup(s)", deleted)
